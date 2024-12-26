@@ -1,0 +1,13 @@
+diff --git a/README b/README
+index 067c1ee2b6..a4a4556e42 100644
+--- a/README
++++ b/README
+@@ -3,6 +3,8 @@
+ # (C) Copyright 2000 - 2013
+ # Wolfgang Denk, DENX Software Engineering, wd@denx.de.
+ 
++Hello
++
+ Summary:
+ ========
+ 

@@ -1,0 +1,13 @@
+diff --git a/cmd/blkcache.c b/cmd/blkcache.c
+index dbd03df14d..96a2b5dd51 100644
+--- a/cmd/blkcache.c
++++ b/cmd/blkcache.c
+@@ -68,7 +68,7 @@ static int do_blkcache(struct cmd_tbl *cmdtp, int flag,
+ 
+ U_BOOT_CMD(
+ 	blkcache, 4, 0, do_blkcache,
+-	"block cache diagnostics and control",
++	"block cache diagnostics and control(yo whaddup ma dawg)",
+ 	"show - show and reset statistics\n"
+ 	"blkcache configure <blocks> <entries> "
+ 	"- set max blocks per entry and max cache entries\n"
