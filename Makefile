@@ -5,7 +5,29 @@ else
 	DOCKER ?= $(shell which podman)
 endif
 
+UBOOT_VERSION = 2025.01-rc4
 QEMU_OPTS = -m 1g -nographic -netdev user,id=net0,tftp=/tftpboot -device e1000,netdev=net0
+
+## U-BOOT
+UBOOT_LOCATION = ../u-boot
+.PHONY: u-boot
+u-boot:
+	@rm -rf $(UBOOT_LOCATION) && \
+	echo "Downloading U-Boot ${UBOOT_VERSION} to '$(shell readlink -f ${UBOOT_LOCATION})'..." && \
+	mkdir -p $(UBOOT_LOCATION) && \
+	curl --progress-bar -L "https://ftp.denx.de/pub/u-boot/u-boot-${UBOOT_VERSION}.tar.bz2" | \
+	tar -xj --strip-components=1 -C $(UBOOT_LOCATION) && \
+	cd $(UBOOT_LOCATION) && \
+	git init && \
+	git add . && \
+	git commit -m "Initial commit" && \
+	git tag root && \
+	git am ../cb-buildtools/patches/*.patch
+
+.PHONY: patches
+patches:
+	@rm -rf ../cb-buildtools/patches/*.patch && \
+	git -C $(UBOOT_LOCATION) format-patch --output-directory ../cb-buildtools/patches root..HEAD
 
 ## ARM
 .PHONY: arm-build
@@ -13,6 +35,7 @@ arm-build:
 	$(DOCKER) build -t cb/buildtools:arm-dev \
 		--build-arg CROSS_COMPILE=arm-linux-gnueabihf- \
 		--build-arg DEFCONFIG=qemu_arm_defconfig \
+		--build-arg VERSION=${UBOOT_VERSION} \
 		.
 
 .PHONY: arm-run
@@ -45,6 +68,10 @@ build:
 run: build
 	$(DOCKER) run -it --rm --privileged -v $(shell pwd)/tftpboot:/tftpboot cb/buildtools:x86_64-dev \
 		qemu-system-i386 ${QEMU_OPTS} -machine pc -bios /u-boot/u-boot.rom
+
+.PHONY: shell
+shell:
+	$(DOCKER) run -it --rm --privileged -v $(shell pwd)/tftpboot:/tftpboot cb/buildtools:x86_64-dev /bin/bash
 
 ## Rust
 .PHONY: rust
