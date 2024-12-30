@@ -45,3 +45,10 @@ build:
 run: build
 	$(DOCKER) run -it --rm --privileged -v $(shell pwd)/tftpboot:/tftpboot cb/buildtools:x86_64-dev \
 		qemu-system-i386 ${QEMU_OPTS} -machine pc -bios /u-boot/u-boot.rom
+
+## Rust
+.PHONY: rust
+rust:
+	cd rust_payload && \
+	cargo build --target wasm32-unknown-unknown && \
+	cp target/wasm32-unknown-unknown/debug/rustwasm.wasm ../tftpboot/main.wasm
