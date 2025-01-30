@@ -29,10 +29,23 @@ patches:
 	@rm -rf ../cb-buildtools/patches/*.patch && \
 	git -C $(UBOOT_LOCATION) format-patch --output-directory ../cb-buildtools/patches root..HEAD
 
+.PHONE: compile-commands
+compile-commands:
+	@$(DOCKER) build --target compile-commands -t cb/buildtools:compile-commands-dev \
+		--build-arg VERSION=${UBOOT_VERSION} \
+		. && \
+	$(DOCKER) run -it --rm --privileged cb/buildtools:compile-commands-dev \
+		cat /u-boot/compile_commands.json | \
+		sed -e 's#-nostdinc##g' \
+			-e 's#-flto=4##g' \
+			-e 's#-isystem /usr/lib/gcc/[^ ]*/include##g' \
+            -e 's#/u-boot#$(shell realpath $(UBOOT_LOCATION))#g' \
+			> $(UBOOT_LOCATION)/compile_commands.json
+
 ## ARM
 .PHONY: arm-build
 arm-build:
-	$(DOCKER) build -t cb/buildtools:arm-dev \
+	$(DOCKER) build --target emulator -t cb/buildtools:arm-dev \
 		--build-arg CROSS_COMPILE=arm-linux-gnueabihf- \
 		--build-arg DEFCONFIG=qemu_arm_defconfig \
 		--build-arg VERSION=${UBOOT_VERSION} \
@@ -46,7 +59,7 @@ arm-run: arm-build
 ## AARCH64
 .PHONY: aarch64-build
 aarch64-build:
-	$(DOCKER) build -t cb/buildtools:aarch64-dev \
+	$(DOCKER) build --target emulator -t cb/buildtools:aarch64-dev \
 		--build-arg CROSS_COMPILE=aarch64-linux-gnu- \
 		--build-arg DEFCONFIG=qemu_arm64_wasm_defconfig \
 		.
@@ -59,7 +72,7 @@ aarch64-run: aarch64-build
 ## X86
 .PHONY: build
 build:
-	$(DOCKER) build -t cb/buildtools:x86_64-dev \
+	$(DOCKER) build --target emulator -t cb/buildtools:x86_64-dev \
 		--build-arg CROSS_COMPILE=x86_64-linux-gnu- \
 		--build-arg DEFCONFIG=qemu-x86_wasm_defconfig \
 		. 
@@ -71,7 +84,7 @@ run: build
 
 .PHONY: shell
 shell:
-	$(DOCKER) run -it --rm --privileged -v $(shell pwd)/tftpboot:/tftpboot cb/buildtools:x86_64-dev /bin/bash
+	$(DOCKER) run -it --rm --privileged -v $(shell pwd)/tftpboot:/tftpboot cb/buildtools:compile-commands-dev /bin/bash
 
 ## Rust
 .PHONY: rust

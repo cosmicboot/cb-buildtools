@@ -1,5 +1,5 @@
-### BUILD-LAYER ###
-FROM debian:bookworm-slim AS builder
+### BASE-LAYER ###
+FROM debian:sid-slim AS base
 
 # Set the build arguments
 ARG VERSION=2025.01-rc4
@@ -15,6 +15,7 @@ RUN tar -xf "u-boot-${VERSION}.tar.bz2" --strip-components=1
 # Install the base dependencies
 RUN apt-get install -y \
     bison \ 
+    efitools \
     flex \
     make \
     swig \
@@ -32,10 +33,21 @@ RUN apt-get install -y gcc-aarch64-linux-gnu
 COPY patches/*.patch /u-boot/patches/ 
 RUN for i in patches/*.patch; do patch -p1 --merge < $i; done
 
-# Build u-boot
+### COMPILE-COMMANDS ###
+FROM base AS compile-commands
+
+RUN make sandbox_defconfig
+RUN make -j4
+RUN ./scripts/gen_compile_commands.py -o compile_commands.json
+
+### CROSS-BUILDER-LAYER ###
+FROM base AS builder
+
+# Set the build arguments
 ARG DEFCONFIG=qemu-x86_defconfig
 ARG CROSS_COMPILE=x86_64-linux-gnu-
 
+# Build u-boot
 RUN make CROSS_COMPILE=$CROSS_COMPILE distclean
 RUN make CROSS_COMPILE=$CROSS_COMPILE $DEFCONFIG
 RUN make CROSS_COMPILE=$CROSS_COMPILE -j4
