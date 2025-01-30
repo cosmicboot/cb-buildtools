@@ -1,0 +1,99 @@
+#![no_std]
+#![no_main]
+
+extern crate alloc;
+
+// mod logging;
+// mod ffi;
+
+
+#[global_allocator]
+static _GLOBAL_ALLOCATOR: rlsf::SmallGlobalTlsf = rlsf::SmallGlobalTlsf::new();
+
+#[lang = "eh_personality"]
+extern "C" fn _eh_personality() {}
+
+#[no_mangle]
+extern "C" fn _Unwind_Resume() {}
+
+#[no_mangle]
+pub extern "C" fn main() -> i32 {
+    logging::init_with_level(Level::Info).unwrap();
+    
+    // eth_set_current
+    // eth_dev = eth_get_dev
+    
+    // create netif = net_lwip_new_netif(eth_dev)
+    // destroy netif -> net_lwip_remove_netif(netif)
+    
+    // this creates a new event, outside of any spans.
+    info!("preparing to shave yaks");
+    
+    let mut vector = Vec::new();
+    
+    for i in 0..10 {
+        info!("Hello, world: {}!\n", i);
+        vector.push(i);
+    }
+    info!("{:#?}", vector);
+    
+    let dv = DelayedValue {
+        value: 10_u8,
+        sleep: Keyboard {count: 0},
+    };
+    
+    println!("waiting for delayed value");
+    
+    let v = dv.await;
+    println!("delayed value: {}", v);
+    
+    return 123;
+}
+
+// use std::{future::Future, pin::Pin, task::{Context, Poll}};
+
+// use log::{info, Level};
+
+// #[derive(Debug)]
+// struct Keyboard {
+//     count: u32,
+// }
+
+// impl Keyboard {
+//     fn poll(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+//         if self.count < 10 {
+//             self.count += 1;
+//             cx.waker().wake_by_ref();
+//             Poll::Pending
+//         } else {
+//             Poll::Ready(())
+//         }
+//     }
+// }
+
+// #[derive(Debug)]
+// pub struct DelayedValue<T: Copy> {
+//     value: T,
+//     sleep: Keyboard,
+// }
+
+// impl<T: Copy> DelayedValue<T> {
+//     pub fn new(value: T, sleep: Keyboard) -> DelayedValue<T> {
+//         DelayedValue {value, sleep}
+//     }
+// }
+
+// impl<T: Copy> Future for DelayedValue<T> {
+//     type Output = T;
+
+//     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+//         let x = self.value;
+//         let mut s = unsafe { self.map_unchecked_mut(|s| &mut s.sleep) };
+
+//         match &mut s.poll(cx) {
+//             Poll::Ready(()) => Poll::Ready(x),
+//             Poll::Pending => Poll::Pending,
+//         }
+//     }
+// }
+

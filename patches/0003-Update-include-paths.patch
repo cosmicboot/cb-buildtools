@@ -1,7 +1,7 @@
 From e16e211748f5a0bd4d6f6d24f4eeff2209b601a3 Mon Sep 17 00:00:00 2001
 From: Mathias Gredal <mathiasgredal@icloud.com>
 Date: Mon, 30 Dec 2024 02:47:31 +0100
-Subject: [PATCH 3/7] Update include paths
+Subject: [PATCH 3/9] Update include paths
 
 ---
  include/wasm3/m3_core.h |  1 -

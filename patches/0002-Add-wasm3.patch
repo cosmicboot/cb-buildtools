@@ -1,7 +1,7 @@
 From 3f825f731f9cbc6f0c09efda73ecd39454ff340e Mon Sep 17 00:00:00 2001
 From: Mathias Gredal <mathiasgredal@icloud.com>
 Date: Mon, 30 Dec 2024 02:39:03 +0100
-Subject: [PATCH 2/7] Add wasm3
+Subject: [PATCH 2/9] Add wasm3
 
 ---
  include/wasm3/m3_bind.h             |   21 +

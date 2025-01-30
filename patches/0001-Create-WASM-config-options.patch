@@ -1,7 +1,7 @@
 From 86f04c8a1afb892b3e76fd01c3d21f05e62a6a63 Mon Sep 17 00:00:00 2001
 From: Mathias Gredal <mathiasgredal@icloud.com>
 Date: Mon, 30 Dec 2024 01:20:06 +0100
-Subject: [PATCH 1/7] Create WASM config options
+Subject: [PATCH 1/9] Create WASM config options
 
 ---
  arch/arm/config.mk                | 2 +-

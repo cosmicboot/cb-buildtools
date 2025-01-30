@@ -92,3 +92,8 @@ rust:
 	cd rust_payload && \
 	cargo build --target wasm32-unknown-unknown && \
 	cp target/wasm32-unknown-unknown/debug/rustwasm.wasm ../tftpboot/main.wasm
+
+## BOOT
+.PHONY: boot
+boot:
+	git -C ../u-boot add . && git -C ../u-boot commit --amend --no-edit && $(MAKE) patches aarch64-run
