@@ -1,18 +1,18 @@
-From 87595a9454485630926dcd2c7a7df0606173b3ac Mon Sep 17 00:00:00 2001
+From 7b0289fd133e3fb48cbe71da07f0c3b883e2f950 Mon Sep 17 00:00:00 2001
 From: Mathias Gredal <mathiasgredal@icloud.com>
 Date: Thu, 30 Jan 2025 01:59:19 +0100
 Subject: [PATCH 9/9] Testing
 
 ---
- Kconfig                           |  10 ++-
- cmd/Kconfig                       |   6 --
- cmd/wasm.c                        | 123 +++++++++++++++++++++++++++---
+ Kconfig                           |  10 +-
+ cmd/Kconfig                       |   6 -
+ cmd/wasm.c                        | 428 ++++++++++++++++++++++++++++--
  configs/qemu_arm64_wasm_defconfig |   4 +-
  include/wasm3/m3_exec.h           |   1 +
  include/wasm3/wasm3.h             |   3 +-
- lib/wasm3/m3_env.c                |  17 +----
+ lib/wasm3/m3_env.c                |  17 +-
  lib/wasm3/m3_info.c               |   1 +
- 8 files changed, 131 insertions(+), 34 deletions(-)
+ 8 files changed, 427 insertions(+), 43 deletions(-)
 
 diff --git a/Kconfig b/Kconfig
 index 1f5b0f19..f872b3ca 100644
@@ -64,146 +64,445 @@ index 69347d60..1d7ddb4e 100644
 -	help
 -	  Enable WebAssembly support
 diff --git a/cmd/wasm.c b/cmd/wasm.c
-index c02dd54e..d157b581 100644
+index c02dd54e..ae4c3432 100644
 --- a/cmd/wasm.c
 +++ b/cmd/wasm.c
-@@ -3,12 +3,32 @@
+@@ -3,96 +3,488 @@
   * Copyright (C) 2025, Mathias Gredal, mathiasgredal@icloud.com.
   */
  
 +#include "dm/device.h"
++#include "lwip/priv/tcp_priv.h"
++#include "lwip/tcp.h"
 +#include "net-common.h"
  #include <command.h>
  #include <fs.h>
  #include <log.h>
  #include <mapmem.h>
++#include <net-lwip.h>
 +#include <stdint.h>
 +#include <stdio.h>
  #include <vsprintf.h>
  #include <wasm3/wasm3.h>
-+// #include <lwip/icmp.h>
-+// #include <lwip/inet_chksum.h>
-+// #include <lwip/raw.h>
-+// #include <net-lwip.h>
-+// #include <lwip/timeouts.h>
-+
+ 
++/*
++ * Macro to link a raw function into a WebAssembly (WASM) module.
++ *
++ * This macro wraps the `m3_LinkRawFunction` call and handles error checking.
++ * It links a host function (func_ptr) into the given WASM module under the
++ * "env" namespace with the specified name (func_name) and signature (sig).
++ *
++ * Parameters:
++ *   - module:    The WASM module to link the function into.
++ *   - func_name: Name of the function within the WASM module.
++ *   - sig:       Function signature string (e.g., "v(*i)" for void returning functions).
++ *   - func_ptr:  Pointer to the host function to be linked.
++ *
++ * Behavior:
++ *   - If the link operation fails with a critical error, it logs the error and
++ *     returns `1` to indicate failure.
++ *   - It tolerates `m3Err_functionLookupFailed`, as it may arise in dynamic linking scenarios.
++ */
 +#define LINK_RAW_FUNCTION(module, func_name, sig, func_ptr)                                                            \
 +    do                                                                                                                 \
 +    {                                                                                                                  \
++        /* Attempt to link the raw function */                                                                         \
 +        M3Result result = m3_LinkRawFunction(module, "env", func_name, sig, func_ptr);                                 \
-+        if (result != m3Err_none && result != m3Err_functionLookupFailed)                                                                                      \
++                                                                                                                       \
++        /* Handle errors from the linking process */                                                                   \
++        if (result != m3Err_none && result != m3Err_functionLookupFailed)                                              \
 +        {                                                                                                              \
-+            log_err("error linking function: %s\n", result);                                                           \
++            log_err("Error linking function '%s': %s\n", func_name, result);                                           \
 +            return 1;                                                                                                  \
 +        }                                                                                                              \
 +    } while (0)
- 
++
++/*
++ * Print a string from the WebAssembly (WASM) environment.
++ *
++ * This function retrieves a memory pointer and size from the WASM runtime,
++ * validates the memory range, and then prints the string to the console.
++ * It ensures safe access to the provided memory.
++ *
++ * Arguments:
++ *   - i_ptr: Pointer to the string in WASM memory.
++ *   - i_size: Size of the string (number of bytes).
++ *
++ * Behavior:
++ *   - The function validates the memory pointer and size to prevent out-of-bounds access.
++ *   - The string is printed to the console using the specified size.
++ *
++ * Returns:
++ *   - Success if the string is printed successfully.
++ *   - An error if the memory validation fails.
++ */
  m3ApiRawFunction(env_print)
  {
-@@ -17,13 +37,99 @@ m3ApiRawFunction(env_print)
++    /* Retrieve the pointer to the string */
+     m3ApiGetArgMem(void *, i_ptr);
++
++    /* Retrieve the size of the string */
+     m3ApiGetArg(uint32_t, i_size);
  
++    /* Validate that the memory range [i_ptr, i_ptr + i_size) is accessible */
      m3ApiCheckMem(i_ptr, i_size);
  
 -    printf("%.*s", i_size, i_ptr);
++    /* Print the string to the console */
 +    printf("%.*s", i_size, (char *)i_ptr);
  
++    /* Indicate successful execution */
      m3ApiSuccess();
  }
  
 -static int do_wasm(struct cmd_tbl *cmdtp, int flag, int argc,
 -                   char *const argv[])
-+
++/*
++ * Check if a key has been pressed and retrieve its value.
++ *
++ * This function checks for pending input from the console. If a key is
++ * available, it reads and returns the key as a 32-bit integer. If no key
++ * has been pressed, it returns `-1` to indicate the absence of input.
++ *
++ * Returns:
++ *   - Key value (int32_t) if a key is pressed.
++ *   - `-1` if no key is available.
++ */
 +m3ApiRawFunction(env_key_pressed)
 +{
-+    m3ApiReturnType(int32_t);
++    m3ApiReturnType(int32_t); // Declare the return type as a 32-bit integer
 +
-+    if (tstc()) {
++    /* Check if a character is available in the input buffer */
++    if (tstc())
++    {
++        /* Retrieve the key from the input buffer */
 +        int32_t key = getchar();
++
++        /* Return the key value */
 +        m3ApiReturn(key);
 +    }
 +
++    /* Return -1 if no key is pressed */
 +    m3ApiReturn(-1);
 +}
 +
++/*
++ * Retrieve the current system time in milliseconds.
++ *
++ * This function utilizes the `get_timer()` API to obtain the current
++ * timer value, measured relative to system start or reset. The result
++ * is returned as a 64-bit integer, ensuring compatibility with large
++ * time values.
++ */
 +m3ApiRawFunction(env_now)
 +{
-+    m3ApiReturnType(int64_t);
++    m3ApiReturnType(int64_t); // Declare the return type as a 64-bit integer
++
++    /* Fetch the current timer value in milliseconds (relative to '0') */
 +    int64_t now = get_timer(0);
++
++    /* Return the retrieved time */
 +    m3ApiReturn(now);
 +}
 +
++/*
++ * Setup the network environment and initialize the network interface.
++ * This function ensures that the network is properly configured before use.
++ */
++m3ApiRawFunction(env_setup_network)
++{
++    m3ApiReturnType(int32_t); // Declare the return type as 32-bit integer
++    int32_t ret = 0;          // Default return value indicating success
 +
-+// struct ping_ctx {
-+// 	ip_addr_t target;
-+// 	struct raw_pcb *pcb;
-+// 	struct icmp_echo_hdr *iecho;
-+// 	uint16_t seq_num;
-+// 	bool alive;
-+// };
++    static bool initialized = false; // Track initialization state
 +
++    /* If already initialized, no further action is required */
++    if (initialized)
++        m3ApiReturn(ret);
 +
-+// static int ping_raw_init(struct ping_ctx *ctx)
-+// {
-+// 	ctx->pcb = raw_new(IP_PROTO_ICMP);
-+// 	if (!ctx->pcb)
-+// 		return -ENOMEM;
++    /* Set the current Ethernet device */
++    eth_set_current();
 +
-+// 	raw_recv(ctx->pcb, ping_recv, ctx);
-+// 	raw_bind(ctx->pcb, IP_ADDR_ANY);
++    /* Retrieve the current Ethernet device */
++    struct udevice *udev = eth_get_dev();
++    if (!udev)
++    {
++        /* If no valid device is found, return an error */
++        m3ApiReturn(-1);
++    }
 +
-+// 	return 0;
-+// }
++    /* Create a new network interface for the device */
++    struct netif *netif = net_lwip_new_netif(udev);
++    if (!netif)
++    {
++        /* If network interface creation fails, return an error */
++        m3ApiReturn(-1);
++    }
 +
-+// static int ping_loop(struct udevice *udev)
-+// {
-+// 	struct ping_ctx ctx = {};
-+// 	struct netif *netif;
-+// 	int ret;
++    /* Mark the environment as initialized */
++    initialized = true;
 +
-+// 	netif = net_lwip_new_netif(udev);
-+// 	if (!netif)
-+// 		return CMD_RET_FAILURE;
++    /* Return success */
++    m3ApiReturn(ret);
++}
 +
-+// 	printf("Using %s device\n", udev->name);
++/*
++ * Create a new TCP socket.
++ * This function initializes a new TCP protocol control block (PCB) and returns
++ * a handle to the newly created socket. If the socket cannot be created, an
++ * error code is returned.
++ */
++m3ApiRawFunction(env_socket_create)
++{
++    m3ApiReturnType(uint64_t); // Declare the return type as 64-bit unsigned integer
 +
-+// 	ret = ping_raw_init(&ctx);
-+// 	if (ret < 0) {
-+// 		net_lwip_remove_netif(netif);
-+// 		return ret;
-+// 	}
++    /* Attempt to create a new TCP PCB */
++    struct tcp_pcb *socket = tcp_new();
 +
-+// 	ctx.target = *addr;
++    /* Check if the socket creation was successful */
++    if (socket == NULL)
++    {
++        /* Return an error code if the socket could not be created */
++        m3ApiReturn(-1);
++    }
 +
-+// 	ping_send(&ctx);
++    /* Return the handle to the newly created socket */
++    m3ApiReturn((uint64_t)socket);
++}
 +
-+// 	do {
-+// 		sys_check_timeouts();
-+// 		net_lwip_rx(udev, netif);
-+// 		if (ctx.alive)
-+// 			break;
-+// 		if (ctrlc()) {
-+// 			printf("\nAbort\n");
-+// 			break;
-+// 		}
-+// 	} while (ctx.seq_num <= PING_COUNT);
-+
-+// 	sys_untimeout(ping_send, &ctx);
-+// 	ping_raw_stop(&ctx);
-+
-+// 	net_lwip_remove_netif(netif);
-+
-+// 	if (ctx.alive)
-+// 		return 0;
-+
-+// 	printf("ping failed; host %s is not alive\n", ipaddr_ntoa(addr));
-+// 	return -1;
-+// }
-+
-+static int do_wasm(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
++/*
++ * Close a TCP socket.
++ * This function attempts to close the specified TCP socket. If the socket cannot
++ * be closed, an error code is returned. On success, zero is returned.
++ */
++m3ApiRawFunction(env_socket_close)
  {
++    m3ApiGetArg(uint64_t, socket); // Retrieve the socket handle from the arguments
++    m3ApiReturnType(int32_t);      // Declare the return type as 32-bit integer
++
++    /* Attempt to close the specified socket */
++    err_t err = tcp_close((struct tcp_pcb *)socket);
++
++    /* Verify if the socket was successfully closed */
++    if (err != ERR_OK)
++    {
++        /* Return an error code if the socket could not be closed */
++        m3ApiReturn(err);
++    }
++
++    /* Return success */
++    m3ApiReturn(0);
++}
++
++/*
++ * Maximum number of network I/O events that can be tracked simultaneously.
++ */
++#define MAX_NETWORK_IO_EVENTS 64
++
++/*
++ * Structure to track the state of a network I/O event.
++ */
++typedef struct NetworkIOEvent
++{
++    struct tcp_pcb *pcb;   // TCP protocol control block associated with the event
++    err_t error;           // Error code (if any) for the event
++    bool is_resolved;      // Flag indicating whether the event has been resolved
++} NetworkIOEvent;
++
++/*
++ * Array to store active network I/O events.
++ */
++static NetworkIOEvent network_io_events[MAX_NETWORK_IO_EVENTS];
++
++/*
++ * Callback function invoked when a TCP connection attempt completes.
++ */
++static err_t tcp_connect_callback(void *arg, struct tcp_pcb *pcb, err_t error)
++{
++    /* Iterate through the network I/O events array to find the matching PCB */
++    for (int i = 0; i < MAX_NETWORK_IO_EVENTS; i++)
++    {
++        if (network_io_events[i].pcb == pcb)
++        {
++            /* Update the event with the result of the connection attempt */
++            network_io_events[i].error = error;
++            network_io_events[i].is_resolved = true;
++            break;
++        }
++    }
++
++    return ERR_OK;
++}
++
++/*
++ * Connect a TCP socket to a remote address and port.
++ * This function initiates a TCP connection to the specified address and port.
++ * The result of the connection attempt can be checked using env_socket_poll.
++ */
++m3ApiRawFunction(env_socket_connect)
++{
++    m3ApiGetArg(uint64_t, socket); // Retrieve the socket handle from the arguments
++    m3ApiGetArg(uint32_t, addr);   // Retrieve the IP address from the arguments
++    m3ApiGetArg(uint16_t, port);   // Retrieve the port number from the arguments
++    m3ApiReturnType(int32_t);      // Declare the return type as 32-bit integer
++
++    /* Convert the port number from host byte order to network byte order */
++    u16_t net_port = htons(port);
++
++    /* Find an available slot in the network I/O events array */
++    bool slot_found = false;
++    for (int i = 0; i < MAX_NETWORK_IO_EVENTS; i++)
++    {
++        if (network_io_events[i].pcb != NULL)
++            continue;
++
++        /* Ensure the socket is not already being tracked */
++        if (network_io_events[i].pcb == (struct tcp_pcb *)socket)
++            m3ApiReturn(ERR_VAL);
++
++        /* Assign the socket to the slot */
++        network_io_events[i].pcb = (struct tcp_pcb *)socket;
++        network_io_events[i].is_resolved = false;
++        slot_found = true;
++        break;
++    }
++
++    /* Return an error if no slot is available */
++    if (!slot_found)
++    {
++        m3ApiReturn(ERR_MEM);
++    }
++
++    /* Attempt to establish the TCP connection */
++    err_t error = tcp_connect((struct tcp_pcb *)socket, &(ip_addr_t){.addr = addr}, net_port, tcp_connect_callback);
++
++    /* Return an error if the connection attempt fails immediately */
++    if (error != ERR_OK)
++    {
++        m3ApiReturn(error);
++    }
++
++    /* Return success to indicate the connection attempt is in progress */
++    m3ApiReturn(0);
++}
++
++/*
++ * Poll the status of I/O operations for a TCP socket.
++ * This function checks whether any pending I/O operation (e.g., connection, data transfer)
++ * associated with the specified socket has completed. If the operation is still in progress,
++ * a special error code (ERR_INPROGRESS) is returned. Otherwise, the result of the operation
++ * is returned (ERR_OK for success or an appropriate error code).
++ */
++m3ApiRawFunction(env_socket_poll)
++{
++    m3ApiGetArg(uint64_t, socket); // Retrieve the socket handle from the arguments
++    m3ApiReturnType(int32_t);      // Declare the return type as 32-bit integer
++
++    /* Iterate through the network I/O events array to find the matching socket */
++    for (int i = 0; i < MAX_NETWORK_IO_EVENTS; i++)
++    {
++        if (network_io_events[i].pcb != (struct tcp_pcb *)socket)
++            continue;
++
++        /* Return the result if the connection attempt has completed */
++        if (network_io_events[i].is_resolved)
++        {
++            int32_t result = network_io_events[i].error;
++            network_io_events[i].pcb = NULL;
++            network_io_events[i].error = 0;
++            network_io_events[i].is_resolved = false;
++            m3ApiReturn(result);
++        }
++        else
++        {
++            /* Return a special code to indicate the operation is still in progress */
++            m3ApiReturn(ERR_INPROGRESS);
++        }
++    }
++
++    tcp_recv_null(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err)
++
++    /* Return an error if the socket is not being tracked */
++    m3ApiReturn(ERR_VAL);
++}
++
++/*
++ * Execute a WebAssembly (WASM) program.
++ *
++ * This command initializes the WASM environment, parses and loads a WASM module
++ * from memory, links necessary host functions, and executes the module's main
++ * function. The result of the execution is returned to the caller.
++ *
++ * Usage:
++ *   wasm <srcaddr> <srcsize>
++ *
++ * Parameters:
++ *   srcaddr - Memory address where the WASM module is located (hexadecimal).
++ *   srcsize - Size of the WASM module in bytes (hexadecimal).
++ *
++ * Returns:
++ *   - Result of the WASM main function if successful.
++ *   - CMD_RET_USAGE (1) if usage is incorrect.
++ *   - 1 for other errors.
++ */
++static int do_wasm(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
++{
++    /* Inform the user that the WASM program is being executed */
      printf("Running WASM program...\n");
  
-@@ -66,13 +172,12 @@ static int do_wasm(struct cmd_tbl *cmdtp, int flag, int argc,
+-    // Parse arguments
++    /* Validate the number of arguments */
+     if (argc != 3)
+         return CMD_RET_USAGE;
+ 
++    /* Parse the memory address and size arguments */
+     unsigned long src_addr = hextoul(argv[1], NULL);
+     unsigned long len = hextoul(argv[2], NULL);
++
++    /* Map the source address to a usable memory region */
+     void *real_addr = map_sysmem(src_addr, len);
+ 
++    /* Initialize the WASM environment */
+     M3Result result = m3Err_none;
+-
+     IM3Environment env = m3_NewEnvironment();
+     if (!env)
+     {
+-        log_err("failed to create environment\n");
++        log_err("Failed to create WASM environment\n");
+         return 1;
+     }
+ 
++    /* Create a WASM runtime with 64 KiB stack space */
+     IM3Runtime runtime = m3_NewRuntime(env, 64 * 1024, NULL);
+     if (!runtime)
+     {
+-        log_err("failed to create runtime\n");
++        log_err("Failed to create WASM runtime\n");
++        m3_FreeEnvironment(env);
+         return 1;
+     }
+ 
++    /* Parse the WASM module from memory */
+     IM3Module module;
+     result = m3_ParseModule(env, &module, real_addr, len);
+     if (result != m3Err_none)
+     {
+-        log_err("error parsing module: %s\n", result);
++        log_err("Error parsing WASM module: %s\n", result);
++        m3_FreeRuntime(runtime);
++        m3_FreeEnvironment(env);
+         return 1;
+     }
+ 
++    /* Load the parsed module into the runtime */
+     result = m3_LoadModule(runtime, module);
+     if (result != m3Err_none)
+     {
+-        log_err("error loading module: %s\n", result);
++        log_err("Error loading WASM module: %s\n", result);
++        m3_FreeRuntime(runtime);
++        m3_FreeEnvironment(env);
          return 1;
      }
  
@@ -213,15 +512,69 @@ index c02dd54e..d157b581 100644
 -        log_err("error linking function: %s\n", result);
 -        return 1;
 -    }
-+    // Linking functions
++    /* Link host functions required by the WASM module */
 +    LINK_RAW_FUNCTION(module, "env_print", "v(*i)", &env_print);
 +    LINK_RAW_FUNCTION(module, "env_key_pressed", "i()", &env_key_pressed);
 +    LINK_RAW_FUNCTION(module, "env_now", "I()", &env_now);
  
-+    // Find and call the main function
++    /* Locate the "main" function within the WASM module */
      IM3Function function = NULL;
      result = m3_FindFunction(&function, runtime, "main");
      if (result != m3Err_none)
+     {
+-        log_err("error finding function: %s\n", result);
++        log_err("Error finding 'main' function in WASM module: %s\n", result);
++        m3_FreeRuntime(runtime);
++        m3_FreeEnvironment(env);
+         return 1;
+     }
+ 
++    /* Execute the "main" function */
+     result = m3_CallV(function);
+     if (result != m3Err_none)
+     {
+-        log_err("error calling function: %s\n", result);
++        log_err("Error calling 'main' function in WASM module: %s\n", result);
++        m3_FreeRuntime(runtime);
++        m3_FreeEnvironment(env);
+         return 1;
+     }
+ 
++    /* Retrieve the result of the "main" function */
+     int32_t ret;
+     m3_GetResultsV(function, &ret);
++
++    /* Clean up resources */
+     m3_FreeRuntime(runtime);
+     m3_FreeEnvironment(env);
++
++    /* Return the result of the WASM program's execution */
+     return ret;
+ }
+ 
+-U_BOOT_CMD(wasm, 3, 1, do_wasm, "run wasm program", "srcaddr [srcsize]");
+\ No newline at end of file
++/*
++ * Register the "wasm" command with U-Boot.
++ *
++ * This command runs a WebAssembly (WASM) program stored in memory.
++ * The user must specify the starting address and size of the WASM module.
++ *
++ * Usage:
++ *   wasm <srcaddr> <srcsize>
++ *
++ * Parameters:
++ *   srcaddr - Memory address where the WASM module is located (hexadecimal).
++ *   srcsize - Size of the WASM module in bytes (hexadecimal).
++ */
++U_BOOT_CMD(wasm,               /* Command name */
++           3,                  /* Maximum number of arguments */
++           1,                  /* Command is repeatable */
++           do_wasm,            /* Command handler function */
++           "run WASM program", /* Short description */
++           "srcaddr srcsize\n" /* Long description with parameters */
++           "  srcaddr - Address of the WASM module (hexadecimal)\n"
++           "  srcsize - Size of the WASM module in bytes (hexadecimal)");
 diff --git a/configs/qemu_arm64_wasm_defconfig b/configs/qemu_arm64_wasm_defconfig
 index e1018e72..319cfa6c 100644
 --- a/configs/qemu_arm64_wasm_defconfig

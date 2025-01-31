@@ -5,7 +5,7 @@ mod asyncio;
 
 use log::info;
 use logging::init_with_level;
-use asyncio::{keyboard::KeyPress, sleep::Sleep, sleep_ms};
+use asyncio::{get_keypress, sleep_ms};
 use simple_async_local_executor::Executor;
 
 #[no_mangle]
@@ -17,11 +17,6 @@ pub extern "C" fn main() {
     let executor = Executor::default();
 
     executor.spawn(async {
-        // Wait for keypress
-        // log::info!("Awaiting keypress A");
-        // let key = KeyPress.await;
-        // log::info!("Key pressed: {}", key);
-
         // Sleep for 1 second
         for i in 0..10 {
             sleep_ms(1000).await;
@@ -36,7 +31,7 @@ pub extern "C" fn main() {
 
     executor.spawn(async {
         log::info!("Awaiting keypress B");
-        let key = KeyPress.await;
+        let key = get_keypress().await;
         log::info!("Key pressed: {}", key);
     });
 
