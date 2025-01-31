@@ -2,10 +2,11 @@ use log::{Level, Log, Metadata, Record, SetLoggerError};
 
 use crate::ffi;
 
-static LOGGER: UBOOTLogger = UBOOTLogger {};
+static LOGGER: Logger = Logger {};
 
-struct UBOOTLogger {}
-impl Log for UBOOTLogger {
+struct Logger {}
+
+impl Log for Logger {
     #[inline]
     fn enabled(&self, metadata: &Metadata) -> bool {
         metadata.level() <= log::max_level()

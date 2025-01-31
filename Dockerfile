@@ -36,7 +36,7 @@ RUN for i in patches/*.patch; do patch -p1 --merge < $i; done
 ### COMPILE-COMMANDS ###
 FROM base AS compile-commands
 
-RUN make sandbox_defconfig
+RUN make qemu_arm64_lwip_defconfig
 RUN make -j4
 RUN ./scripts/gen_compile_commands.py -o compile_commands.json
 

@@ -1,39 +1,106 @@
-From 4ee432e81ee4d43c2713e2d1f405a77546e80044 Mon Sep 17 00:00:00 2001
+From 87595a9454485630926dcd2c7a7df0606173b3ac Mon Sep 17 00:00:00 2001
 From: Mathias Gredal <mathiasgredal@icloud.com>
 Date: Thu, 30 Jan 2025 01:59:19 +0100
 Subject: [PATCH 9/9] Testing
 
 ---
- cmd/wasm.c            | 31 ++++++++++++++++++++++---------
- include/wasm3/wasm3.h |  3 +--
- lib/wasm3/m3_env.c    | 17 ++++-------------
- 3 files changed, 27 insertions(+), 24 deletions(-)
+ Kconfig                           |  10 ++-
+ cmd/Kconfig                       |   6 --
+ cmd/wasm.c                        | 123 +++++++++++++++++++++++++++---
+ configs/qemu_arm64_wasm_defconfig |   4 +-
+ include/wasm3/m3_exec.h           |   1 +
+ include/wasm3/wasm3.h             |   3 +-
+ lib/wasm3/m3_env.c                |  17 +----
+ lib/wasm3/m3_info.c               |   1 +
+ 8 files changed, 131 insertions(+), 34 deletions(-)
 
+diff --git a/Kconfig b/Kconfig
+index 1f5b0f19..f872b3ca 100644
+--- a/Kconfig
++++ b/Kconfig
+@@ -741,6 +741,12 @@ config LDR_CPU
+ 	  generally used on processors from Analog Devices, but may be also
+ 	  be useful for other vendors.
+ 
++config WASM
++	bool "Use WebAssembly"
++	default n
++	help
++	  Enable WebAssembly support.
++
+ source "api/Kconfig"
+ 
+ endmenu		# General setup
+@@ -761,7 +767,8 @@ menu Networking
+ 
+ choice
+ 	prompt "Networking stack"
+-	default NET
++	default NET if !WASM
++	default NET_LWIP if WASM
+ 
+ config NO_NET
+ 	bool "No networking support"
+@@ -786,7 +793,6 @@ config NET_LWIP
+ 	  depend on CONFIG_NET (such as cmd/net.c enabled via CONFIG_CMD_NET).
+ 	  Therefore the two symbols CONFIG_NET and CONFIG_NET_LWIP are mutually
+ 	  exclusive.
+-
+ endchoice
+ 
+ source "net/Kconfig"
+diff --git a/cmd/Kconfig b/cmd/Kconfig
+index 69347d60..1d7ddb4e 100644
+--- a/cmd/Kconfig
++++ b/cmd/Kconfig
+@@ -3038,9 +3038,3 @@ config CMD_MESON
+ 	  Enable useful commands for the Meson Soc family developed by Amlogic Inc.
+ 
+ endif
+-
+-config WASM
+-	bool "WASM"
+-	default n
+-	help
+-	  Enable WebAssembly support
 diff --git a/cmd/wasm.c b/cmd/wasm.c
-index c02dd54e..cc907137 100644
+index c02dd54e..d157b581 100644
 --- a/cmd/wasm.c
 +++ b/cmd/wasm.c
-@@ -7,9 +7,19 @@
+@@ -3,12 +3,32 @@
+  * Copyright (C) 2025, Mathias Gredal, mathiasgredal@icloud.com.
+  */
+ 
++#include "dm/device.h"
++#include "net-common.h"
+ #include <command.h>
  #include <fs.h>
  #include <log.h>
  #include <mapmem.h>
++#include <stdint.h>
 +#include <stdio.h>
  #include <vsprintf.h>
  #include <wasm3/wasm3.h>
- 
-+#define LINK_RAW_FUNCTION(module, func_name, sig, func_ptr) \
-+do { \
-+    M3Result result = m3_LinkRawFunction(module, "env", func_name, sig, func_ptr); \
-+    if (result != m3Err_none) { \
-+        log_err("error linking function: %s\n", result); \
-+        return 1; \
-+    } \
-+} while (0)
++// #include <lwip/icmp.h>
++// #include <lwip/inet_chksum.h>
++// #include <lwip/raw.h>
++// #include <net-lwip.h>
++// #include <lwip/timeouts.h>
 +
++#define LINK_RAW_FUNCTION(module, func_name, sig, func_ptr)                                                            \
++    do                                                                                                                 \
++    {                                                                                                                  \
++        M3Result result = m3_LinkRawFunction(module, "env", func_name, sig, func_ptr);                                 \
++        if (result != m3Err_none && result != m3Err_functionLookupFailed)                                                                                      \
++        {                                                                                                              \
++            log_err("error linking function: %s\n", result);                                                           \
++            return 1;                                                                                                  \
++        }                                                                                                              \
++    } while (0)
+ 
  m3ApiRawFunction(env_print)
  {
-     m3ApiGetArgMem(void *, i_ptr);
-@@ -17,13 +27,18 @@ m3ApiRawFunction(env_print)
+@@ -17,13 +37,99 @@ m3ApiRawFunction(env_print)
  
      m3ApiCheckMem(i_ptr, i_size);
  
@@ -45,17 +112,98 @@ index c02dd54e..cc907137 100644
  
 -static int do_wasm(struct cmd_tbl *cmdtp, int flag, int argc,
 -                   char *const argv[])
-+m3ApiRawFunction(env_ping)
++
++m3ApiRawFunction(env_key_pressed)
 +{
-+    printf("pong\n");
-+    m3ApiSuccess();
++    m3ApiReturnType(int32_t);
++
++    if (tstc()) {
++        int32_t key = getchar();
++        m3ApiReturn(key);
++    }
++
++    m3ApiReturn(-1);
 +}
++
++m3ApiRawFunction(env_now)
++{
++    m3ApiReturnType(int64_t);
++    int64_t now = get_timer(0);
++    m3ApiReturn(now);
++}
++
++
++// struct ping_ctx {
++// 	ip_addr_t target;
++// 	struct raw_pcb *pcb;
++// 	struct icmp_echo_hdr *iecho;
++// 	uint16_t seq_num;
++// 	bool alive;
++// };
++
++
++// static int ping_raw_init(struct ping_ctx *ctx)
++// {
++// 	ctx->pcb = raw_new(IP_PROTO_ICMP);
++// 	if (!ctx->pcb)
++// 		return -ENOMEM;
++
++// 	raw_recv(ctx->pcb, ping_recv, ctx);
++// 	raw_bind(ctx->pcb, IP_ADDR_ANY);
++
++// 	return 0;
++// }
++
++// static int ping_loop(struct udevice *udev)
++// {
++// 	struct ping_ctx ctx = {};
++// 	struct netif *netif;
++// 	int ret;
++
++// 	netif = net_lwip_new_netif(udev);
++// 	if (!netif)
++// 		return CMD_RET_FAILURE;
++
++// 	printf("Using %s device\n", udev->name);
++
++// 	ret = ping_raw_init(&ctx);
++// 	if (ret < 0) {
++// 		net_lwip_remove_netif(netif);
++// 		return ret;
++// 	}
++
++// 	ctx.target = *addr;
++
++// 	ping_send(&ctx);
++
++// 	do {
++// 		sys_check_timeouts();
++// 		net_lwip_rx(udev, netif);
++// 		if (ctx.alive)
++// 			break;
++// 		if (ctrlc()) {
++// 			printf("\nAbort\n");
++// 			break;
++// 		}
++// 	} while (ctx.seq_num <= PING_COUNT);
++
++// 	sys_untimeout(ping_send, &ctx);
++// 	ping_raw_stop(&ctx);
++
++// 	net_lwip_remove_netif(netif);
++
++// 	if (ctx.alive)
++// 		return 0;
++
++// 	printf("ping failed; host %s is not alive\n", ipaddr_ntoa(addr));
++// 	return -1;
++// }
 +
 +static int do_wasm(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
  {
      printf("Running WASM program...\n");
  
-@@ -66,13 +81,11 @@ static int do_wasm(struct cmd_tbl *cmdtp, int flag, int argc,
+@@ -66,13 +172,12 @@ static int do_wasm(struct cmd_tbl *cmdtp, int flag, int argc,
          return 1;
      }
  
@@ -67,12 +215,39 @@ index c02dd54e..cc907137 100644
 -    }
 +    // Linking functions
 +    LINK_RAW_FUNCTION(module, "env_print", "v(*i)", &env_print);
-+    LINK_RAW_FUNCTION(module, "env_ping", "v()", &env_ping);
++    LINK_RAW_FUNCTION(module, "env_key_pressed", "i()", &env_key_pressed);
++    LINK_RAW_FUNCTION(module, "env_now", "I()", &env_now);
  
 +    // Find and call the main function
      IM3Function function = NULL;
      result = m3_FindFunction(&function, runtime, "main");
      if (result != m3Err_none)
+diff --git a/configs/qemu_arm64_wasm_defconfig b/configs/qemu_arm64_wasm_defconfig
+index e1018e72..319cfa6c 100644
+--- a/configs/qemu_arm64_wasm_defconfig
++++ b/configs/qemu_arm64_wasm_defconfig
+@@ -1,6 +1,6 @@
+ #include <configs/qemu_arm64_defconfig>
+ 
+ CONFIG_WASM=y
+-CONFIG_BOOTCOMMAND="setenv serverip 10.0.2.2; setenv ipaddr 10.0.2.15; setenv netmask 255.255.255.0; tftpboot $loadaddr main.wasm; wasm $loadaddr $filesize" 
++CONFIG_BOOTCOMMAND="setenv serverip 10.0.2.2; setenv gatewayip 10.0.2.2; setenv ipaddr 10.0.2.15; setenv netmask 255.255.255.0; tftpboot $loadaddr main.wasm; wasm $loadaddr $filesize" 
+ CONFIG_SYS_MALLOC_LEN=0x10000000
+-SYS_MALLOC_CLEAR_ON_INIT=n
+\ No newline at end of file
++SYS_MALLOC_CLEAR_ON_INIT=n
+diff --git a/include/wasm3/m3_exec.h b/include/wasm3/m3_exec.h
+index dcdf370b..61bdaf2f 100644
+--- a/include/wasm3/m3_exec.h
++++ b/include/wasm3/m3_exec.h
+@@ -31,6 +31,7 @@
+ #include "m3_exec_defs.h"
+ 
+ #include <limits.h>
++#include <inttypes.h>
+ 
+ d_m3BeginExternC
+ 
 diff --git a/include/wasm3/wasm3.h b/include/wasm3/wasm3.h
 index 3f6e5f0f..278067cc 100644
 --- a/include/wasm3/wasm3.h
@@ -133,6 +308,18 @@ index 9b4097ed..3606f099 100644
          default:
              return "unknown argument type";
          }
+diff --git a/lib/wasm3/m3_info.c b/lib/wasm3/m3_info.c
+index 706c730b..f665280a 100644
+--- a/lib/wasm3/m3_info.c
++++ b/lib/wasm3/m3_info.c
+@@ -8,6 +8,7 @@
+ #include <wasm3/m3_env.h>
+ #include <wasm3/m3_info.h>
+ #include <wasm3/m3_compile.h>
++#include <inttypes.h>
+ 
+ #if defined(DEBUG) || (d_m3EnableStrace >= 2)
+ 
 -- 
 2.39.3 (Apple Git-146)
 

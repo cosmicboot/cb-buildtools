@@ -1,90 +1,49 @@
-use std::{
-    future::Future,
-    pin::Pin,
-    task::{Context, Poll},
-};
+mod ffi;
+mod logging;
+mod panic;
+mod asyncio;
 
+use log::info;
+use logging::init_with_level;
+use asyncio::{keyboard::KeyPress, sleep::Sleep, sleep_ms};
 use simple_async_local_executor::Executor;
-
-extern "C" {
-    pub fn env_print(s: *const u8, len: usize);
-    pub fn env_ping();
-}
-
-fn print(s: &str) {
-    unsafe {
-        env_print(s.as_ptr(), s.len());
-    }
-}
-
-#[derive(Debug)]
-pub struct Keyboard {
-    value: i32,
-}
-
-impl Keyboard {
-    pub fn new(value: i32) -> Keyboard {
-        Keyboard { value }
-    }
-
-    pub fn poll(&mut self, cx: &mut Context<'_>) -> Poll<()> {
-        if self.value > 0 {
-            self.value -= 1;
-            Poll::Pending
-        } else {
-            Poll::Ready(())
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct DelayedValue<T: Copy> {
-    value: T,
-    sleep: Keyboard,
-}
-
-impl<T: Copy> DelayedValue<T> {
-    pub fn new(value: T, sleep: Keyboard) -> DelayedValue<T> {
-        DelayedValue { value, sleep }
-    }
-}
-
-impl<T: Copy> Future for DelayedValue<T> {
-    type Output = T;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let x = self.value;
-        let mut s = unsafe { self.map_unchecked_mut(|s| &mut s.sleep) };
-
-        match &mut s.poll(cx) {
-            Poll::Ready(()) => Poll::Ready(x),
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
 
 #[no_mangle]
 pub extern "C" fn main() {
-    unsafe {
-        env_ping();
-    }
-    print("Hello from Rust!");
+    panic::set_once();
+    init_with_level(log::Level::Info).unwrap();
+    info!("Hello, world!");
+
     let executor = Executor::default();
-    
-    let sleep_1 = Keyboard::new(3);
-    let delayed_value_1 = DelayedValue::new(42, sleep_1);
-    let sleep_2 = Keyboard::new(3);
-    let delayed_value_2 = DelayedValue::new(42, sleep_2);
+
     executor.spawn(async {
-        let (value_1, value_2) = (delayed_value_1.await, delayed_value_2.await);
-        print(&format!("{}, {}", value_1, value_2));
+        // Wait for keypress
+        // log::info!("Awaiting keypress A");
+        // let key = KeyPress.await;
+        // log::info!("Key pressed: {}", key);
+
+        // Sleep for 1 second
+        for i in 0..10 {
+            sleep_ms(1000).await;
+            log::info!("Index {}", i);
+        }
+        //     // Connect to TCP server
+        //     // let mut stream = TcpStream::connect("127.0.0.1", 8080).await.unwrap();
+
+        //     // Write some data
+        //     // stream.write(b"Hello").await.unwrap();
     });
 
-    
+    executor.spawn(async {
+        log::info!("Awaiting keypress B");
+        let key = KeyPress.await;
+        log::info!("Key pressed: {}", key);
+    });
+
     loop {
         let more_tasks = executor.step();
         if !more_tasks {
             break;
-        }   
+        }
     }
 }
