@@ -1,5 +1,3 @@
-use core::error;
-use std::error::Error;
 use std::future::Future;
 use std::net::Ipv4Addr;
 use std::pin::Pin;
@@ -24,7 +22,11 @@ impl Future for TcpConnection {
     type Output = Result<(), LwipError>;
 
     fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
+        let err = unsafe { ffi::env_lwip_rx() };
+        print!("lwip rx result: {}", err);
+
         let err = unsafe { ffi::env_socket_check_connection(self.socket) };
+        // info!("Socket check connection result: {}", err);
         if err == LwipError::InProgress.to_code() {
             return Poll::Pending;
         }
@@ -38,7 +40,7 @@ impl Future for TcpConnection {
 }
 
 pub struct TcpSocket {
-    socket: u64,
+    pub socket: u64,
 }
 
 impl TcpSocket {

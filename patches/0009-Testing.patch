@@ -1,4 +1,4 @@
-From 604acb3ff94fc083a905013e4c13ce1a23097693 Mon Sep 17 00:00:00 2001
+From 7da40e1fe3eff550d14cc4da05e384e04083471e Mon Sep 17 00:00:00 2001
 From: Mathias Gredal <mathiasgredal@icloud.com>
 Date: Thu, 30 Jan 2025 01:59:19 +0100
 Subject: [PATCH 9/9] Testing
@@ -6,14 +6,14 @@ Subject: [PATCH 9/9] Testing
 ---
  Kconfig                           |  10 +-
  cmd/Kconfig                       |   6 -
- cmd/wasm.c                        | 526 ++++++++++++++++++++++++++++--
+ cmd/wasm.c                        | 528 ++++++++++++++++++++++++++++--
  configs/qemu_arm64_wasm_defconfig |   5 +-
  include/wasm3/m3_exec.h           |   1 +
  include/wasm3/wasm3.h             |   3 +-
  lib/lwip/lwip/src/core/tcp_out.c  |   1 +
  lib/wasm3/m3_env.c                |  17 +-
  lib/wasm3/m3_info.c               |   1 +
- 9 files changed, 526 insertions(+), 44 deletions(-)
+ 9 files changed, 528 insertions(+), 44 deletions(-)
 
 diff --git a/Kconfig b/Kconfig
 index 1f5b0f19..f872b3ca 100644
@@ -65,10 +65,10 @@ index 69347d60..1d7ddb4e 100644
 -	help
 -	  Enable WebAssembly support
 diff --git a/cmd/wasm.c b/cmd/wasm.c
-index c02dd54e..a405ce42 100644
+index c02dd54e..4261083b 100644
 --- a/cmd/wasm.c
 +++ b/cmd/wasm.c
-@@ -3,96 +3,584 @@
+@@ -3,96 +3,586 @@
   * Copyright (C) 2025, Mathias Gredal, mathiasgredal@icloud.com.
   */
  
@@ -242,7 +242,7 @@ index c02dd54e..a405ce42 100644
 +
 +static void tcp_err_callback(void *arg, err_t err)
 +{
-+    printf("tcp_err_callback\n");
++    printf("tcp_err_callback: %d\n", err);
 +    for (int i = 0; i < MAX_NETWORK_SOCKETS; i++)
 +    {
 +        if (network_sockets[i].pcb == (struct tcp_pcb *)arg)
@@ -266,6 +266,7 @@ index c02dd54e..a405ce42 100644
 +    if (current_netif != NULL)
 +    {
 +        net_lwip_remove_netif(current_netif);
++        current_netif = NULL;
 +    }
 +}
 +
@@ -390,10 +391,11 @@ index c02dd54e..a405ce42 100644
 + */
 +static err_t tcp_connect_callback(void *arg, struct tcp_pcb *pcb, err_t error)
 +{
++    printf("tcp_connect_callback: %d\n", error);
 +    /* Iterate through the network sockets array to find the matching PCB */
 +    for (int i = 0; i < MAX_NETWORK_SOCKETS; i++)
 +    {
-+        if (network_sockets[i].pcb == pcb)
++        if (network_sockets[i].pcb == arg)
 +        {
 +            /* Update the sockets with the result of the connection attempt */
 +            network_sockets[i].is_connected = (error == ERR_OK);

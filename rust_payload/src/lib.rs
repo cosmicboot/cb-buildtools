@@ -19,6 +19,7 @@ pub extern "C" fn main() {
     init_with_level(log::Level::Info).unwrap();
     let executor = Executor::default();
 
+
     executor.spawn(async {
         let setup_result = unsafe { ffi::env_setup_network() };
         if setup_result != 0 {
@@ -26,7 +27,20 @@ pub extern "C" fn main() {
             return;
         }
 
-        let socket = TcpSocket::connect("120.0.0.1", 80).await.unwrap();
+        let socket = TcpSocket::connect("1.1.1.1", 8080).await;
+
+        if socket.is_err() {
+            log::error!("Failed to connect to server: {}", socket.err().unwrap());
+            return;
+        }
+
+        log::info!("Connected to server");
+
+        // Sleep for 1 second
+        // sleep_ms(1000).await;
+
+        // log::info!("Closing socket");
+        // {unsafe { ffi::env_socket_close(socket.unwrap().socket) }};
 
     });
 
@@ -44,4 +58,5 @@ pub extern "C" fn main() {
     }
 
     unsafe { ffi::env_teardown_network() };
+
 }
