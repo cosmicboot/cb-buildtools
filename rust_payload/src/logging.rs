@@ -24,7 +24,7 @@ impl Log for Logger {
         );
         let res_one_newline = format!("{}\n", res.trim());
         let s = res_one_newline.as_bytes();
-        unsafe { ffi::env_print(s.as_ptr(), s.len()) };
+        unsafe { ffi::env_print(s.as_ptr(), s.len() as u32) };
     }
 
     fn flush(&self) {}

@@ -1,39 +1,40 @@
+mod asyncio;
 mod ffi;
 mod logging;
 mod panic;
-mod asyncio;
+mod lwip_error;
 
+use std::net::Ipv4Addr;
+
+use asyncio::{get_keypress, sleep_ms, tcp::TcpSocket};
 use log::info;
 use logging::init_with_level;
-use asyncio::{get_keypress, sleep_ms};
 use simple_async_local_executor::Executor;
+
+
 
 #[no_mangle]
 pub extern "C" fn main() {
     panic::set_once();
     init_with_level(log::Level::Info).unwrap();
-    info!("Hello, world!");
-
     let executor = Executor::default();
 
     executor.spawn(async {
-        // Sleep for 1 second
-        for i in 0..10 {
-            sleep_ms(1000).await;
-            log::info!("Index {}", i);
+        let setup_result = unsafe { ffi::env_setup_network() };
+        if setup_result != 0 {
+            log::error!("Failed to setup network: {}", setup_result);
+            return;
         }
-        //     // Connect to TCP server
-        //     // let mut stream = TcpStream::connect("127.0.0.1", 8080).await.unwrap();
 
-        //     // Write some data
-        //     // stream.write(b"Hello").await.unwrap();
+        let socket = TcpSocket::connect("120.0.0.1", 80).await.unwrap();
+
     });
 
-    executor.spawn(async {
-        log::info!("Awaiting keypress B");
-        let key = get_keypress().await;
-        log::info!("Key pressed: {}", key);
-    });
+    // executor.spawn(async {
+    //     log::info!("Awaiting keypress B");
+    //     let key = get_keypress().await;
+    //     log::info!("Key pressed: {}", key);
+    // });
 
     loop {
         let more_tasks = executor.step();
@@ -41,4 +42,6 @@ pub extern "C" fn main() {
             break;
         }
     }
+
+    unsafe { ffi::env_teardown_network() };
 }

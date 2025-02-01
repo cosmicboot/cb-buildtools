@@ -4,7 +4,7 @@ use crate::ffi::env_print;
 
 pub fn hook(info: &panic::PanicHookInfo) {
     let msg = info.to_string() + "\n";
-    unsafe { env_print(msg.as_ptr(), msg.len()) };
+    unsafe { env_print(msg.as_ptr(), msg.len() as u32) };
     // TODO: print stack backtrace
 }
 
