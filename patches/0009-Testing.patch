@@ -1,4 +1,4 @@
-From 7da40e1fe3eff550d14cc4da05e384e04083471e Mon Sep 17 00:00:00 2001
+From 416cbdf348c31485f5483560806e6fa4b3f1b8e0 Mon Sep 17 00:00:00 2001
 From: Mathias Gredal <mathiasgredal@icloud.com>
 Date: Thu, 30 Jan 2025 01:59:19 +0100
 Subject: [PATCH 9/9] Testing
@@ -6,14 +6,14 @@ Subject: [PATCH 9/9] Testing
 ---
  Kconfig                           |  10 +-
  cmd/Kconfig                       |   6 -
- cmd/wasm.c                        | 528 ++++++++++++++++++++++++++++--
+ cmd/wasm.c                        | 662 +++++++++++++++++++++++++++++-
  configs/qemu_arm64_wasm_defconfig |   5 +-
  include/wasm3/m3_exec.h           |   1 +
  include/wasm3/wasm3.h             |   3 +-
  lib/lwip/lwip/src/core/tcp_out.c  |   1 +
  lib/wasm3/m3_env.c                |  17 +-
  lib/wasm3/m3_info.c               |   1 +
- 9 files changed, 528 insertions(+), 44 deletions(-)
+ 9 files changed, 662 insertions(+), 44 deletions(-)
 
 diff --git a/Kconfig b/Kconfig
 index 1f5b0f19..f872b3ca 100644
@@ -65,10 +65,10 @@ index 69347d60..1d7ddb4e 100644
 -	help
 -	  Enable WebAssembly support
 diff --git a/cmd/wasm.c b/cmd/wasm.c
-index c02dd54e..4261083b 100644
+index c02dd54e..6e54109a 100644
 --- a/cmd/wasm.c
 +++ b/cmd/wasm.c
-@@ -3,96 +3,586 @@
+@@ -3,96 +3,720 @@
   * Copyright (C) 2025, Mathias Gredal, mathiasgredal@icloud.com.
   */
  
@@ -160,11 +160,13 @@ index c02dd54e..4261083b 100644
 -    printf("%.*s", i_size, i_ptr);
 +    /* Print the string to the console */
 +    printf("%.*s", i_size, (char *)i_ptr);
-+
+ 
 +    /* Indicate successful execution */
-+    m3ApiSuccess();
-+}
-+
+     m3ApiSuccess();
+ }
+ 
+-static int do_wasm(struct cmd_tbl *cmdtp, int flag, int argc,
+-                   char *const argv[])
 +/*
 + * Check if a key has been pressed and retrieve its value.
 + *
@@ -233,6 +235,10 @@ index c02dd54e..4261083b 100644
 +    bool is_connected;              // Flag indicating whether the socket is connected
 +    uint64_t connection_start_time; // Time when the connection was established
 +    err_t err;                      // Error code (if any) for the socket
++
++    // TODO: Implement these using the tcp_sent callback
++    uint32_t bytes_sent;       // Number of sent bytes
++    uint32_t bytes_sent_acked; // Number of sent bytes acknowledged
 +} NetworkSocket;
 +
 +/*
@@ -252,22 +258,58 @@ index c02dd54e..4261083b 100644
 +    }
 +}
 +
-+static void teardown_network(void)
++static err_t tcp_sent_callback(void *arg, struct tcp_pcb *pcb, u16_t len)
 +{
++    printf("tcp_sent_callback: %d\n", len);
 +    for (int i = 0; i < MAX_NETWORK_SOCKETS; i++)
 +    {
-+        if (network_sockets[i].pcb != NULL)
-+        {
-+            tcp_abort(network_sockets[i].pcb);
-+            network_sockets[i] = (NetworkSocket){0};
-+        }
++        if (network_sockets[i].pcb != pcb)
++            continue;
++        network_sockets[i].bytes_sent_acked += len;
++
++        break;
 +    }
 +
++    return ERR_OK;
++}
++
++static void teardown_network(void)
++{
 +    if (current_netif != NULL)
 +    {
 +        net_lwip_remove_netif(current_netif);
 +        current_netif = NULL;
 +    }
++}
++
++static err_t get_socket_connection_error(uint64_t socket)
++{
++
++    if (socket == 0)
++    {
++        return ERR_ARG;
++    }
++
++    for(int i = 0; i < MAX_NETWORK_SOCKETS; i++)
++    {
++        if (network_sockets[i].pcb != (struct tcp_pcb *)socket)
++            continue;
++
++        if (network_sockets[i].is_connected == false)
++        {
++            return ERR_CONN;;
++        }
++
++        if (network_sockets[i].err != ERR_OK)
++        {
++            return network_sockets[i].err;
++        }
++
++        return ERR_OK;
++    }
++    
++    printf("SOMEUNIQUEERROR: %d\n", ERR_VAL);
++    return ERR_VAL;
 +}
 +
 +/*
@@ -284,7 +326,7 @@ index c02dd54e..4261083b 100644
 +
 +    /* Set the current Ethernet device */
 +    eth_set_current();
- 
++
 +    /* Retrieve the current Ethernet device */
 +    struct udevice *udev = eth_get_dev();
 +    if (!udev)
@@ -307,12 +349,19 @@ index c02dd54e..4261083b 100644
 +
 +m3ApiRawFunction(env_teardown_network)
 +{
++    for (int i = 0; i < MAX_NETWORK_SOCKETS; i++)
++    {
++        if (network_sockets[i].pcb != NULL)
++        {
++            tcp_abort(network_sockets[i].pcb);
++            network_sockets[i] = (NetworkSocket){0};
++        }
++    }
++
 +    teardown_network();
-     m3ApiSuccess();
- }
- 
--static int do_wasm(struct cmd_tbl *cmdtp, int flag, int argc,
--                   char *const argv[])
++    m3ApiSuccess();
++}
++
 +m3ApiRawFunction(env_lwip_rx)
 +{
 +    m3ApiReturnType(int32_t); // Declare the return type as 32-bit integer
@@ -345,6 +394,7 @@ index c02dd54e..4261083b 100644
 +    {
 +        tcp_arg(socket, socket);
 +        tcp_err(socket, tcp_err_callback);
++        tcp_sent(socket, tcp_sent_callback);
 +    }
 +
 +    /* Return the handle to the newly created socket */
@@ -390,7 +440,7 @@ index c02dd54e..4261083b 100644
 + * Callback function invoked when a TCP connection attempt completes.
 + */
 +static err_t tcp_connect_callback(void *arg, struct tcp_pcb *pcb, err_t error)
-+{
+ {
 +    printf("tcp_connect_callback: %d\n", error);
 +    /* Iterate through the network sockets array to find the matching PCB */
 +    for (int i = 0; i < MAX_NETWORK_SOCKETS; i++)
@@ -497,7 +547,7 @@ index c02dd54e..4261083b 100644
 +}
 +
 +m3ApiRawFunction(env_max_sockets)
- {
++{
 +    m3ApiReturnType(int32_t);
 +    m3ApiReturn(MAX_NETWORK_SOCKETS);
 +}
@@ -515,6 +565,88 @@ index c02dd54e..4261083b 100644
 +    }
 +
 +    m3ApiReturn(num_sockets);
++}
++
++m3ApiRawFunction(env_socket_write)
++{
++    m3ApiReturnType(int32_t);
++    m3ApiGetArg(uint64_t, socket);
++    m3ApiGetArgMem(void *, buf);
++    m3ApiGetArg(uint32_t, len);
++    m3ApiCheckMem(buf, len);
++
++    err_t socket_err = get_socket_connection_error(socket);
++
++    if (socket_err != ERR_OK)
++    {
++        printf("Socket write connection validation failed\n");
++        m3ApiReturn(socket_err);
++    }
++
++    uint16_t available_sndbuf = tcp_sndbuf((struct tcp_pcb *)socket);
++    if (len > available_sndbuf)
++    {
++        m3ApiReturn(ERR_MEM);
++    }
++
++    err_t err = tcp_write((struct tcp_pcb *)socket, (void *)buf, len, TCP_WRITE_FLAG_COPY);
++    if (err == ERR_OK)
++    {
++        err = tcp_output((struct tcp_pcb *)socket);
++        if (err == ERR_OK)
++        {
++            for (int i = 0; i < MAX_NETWORK_SOCKETS; i++)
++            {
++                if (network_sockets[i].pcb == (struct tcp_pcb *)socket)
++                {
++                    network_sockets[i].bytes_sent += len;
++                }
++            }
++            m3ApiReturn(ERR_OK);
++        }
++        else
++        {
++            printf("tcp_output failed\n");
++            m3ApiReturn(err);
++        }
++    }
++    else
++    {
++        printf("tcp_write failed\n");
++        m3ApiReturn(err);
++    }
++}
++
++m3ApiRawFunction(env_socket_all_writes_acked)
++{
++    m3ApiReturnType(int32_t);
++    m3ApiGetArg(uint64_t, socket);
++    struct tcp_pcb *pcb = (struct tcp_pcb *)socket;
++
++    err_t socket_err = get_socket_connection_error(socket);
++
++    if (socket_err != ERR_OK)
++    {
++        m3ApiReturn(socket_err);
++    }
++
++    for (int i = 0; i < MAX_NETWORK_SOCKETS; i++)
++    {
++        if (network_sockets[i].pcb == pcb)
++        {
++            bool sent_all = network_sockets[i].bytes_sent == network_sockets[i].bytes_sent_acked;
++            if (sent_all)
++            {
++                m3ApiReturn(ERR_OK);
++            }
++            else
++            {
++                m3ApiReturn(ERR_WOULDBLOCK);
++            }
++        }
++    }
++
++    m3ApiReturn(ERR_VAL);
 +}
 +
 +/*
@@ -616,6 +748,8 @@ index c02dd54e..4261083b 100644
 +    LINK_RAW_FUNCTION(module, "env_socket_check_connection", "i(I)", &env_socket_check_connection);
 +    LINK_RAW_FUNCTION(module, "env_max_sockets", "I()", &env_max_sockets);
 +    LINK_RAW_FUNCTION(module, "env_used_sockets", "I()", &env_used_sockets);
++    LINK_RAW_FUNCTION(module, "env_socket_write", "i(I*i)", &env_socket_write);
++    LINK_RAW_FUNCTION(module, "env_socket_all_writes_acked", "i(I)", &env_socket_all_writes_acked);
  
 +    /* Locate the "main" function within the WASM module */
      IM3Function function = NULL;

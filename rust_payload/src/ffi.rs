@@ -20,6 +20,7 @@ unsafe extern "C" {
     pub fn env_socket_connect(socket: u64, addr: u32, port: u32) -> i32;
     pub fn env_socket_check_connection(socket: u64) -> i32;
 
-    pub fn env_socket_read(socket: u64, buf: *mut u8, len: usize) -> i32;
-    pub fn env_socket_write(socket: u64, buf: *const u8, len: usize) -> i32;
+    pub fn env_socket_read(socket: u64, buf: *const u8, len: u32) -> i32;
+    pub fn env_socket_write(socket: u64, buf: *const u8, len: u32) -> i32;
+    pub fn env_socket_all_writes_acked(socket: u64) -> i32;
 }

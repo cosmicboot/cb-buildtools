@@ -1,17 +1,12 @@
 mod asyncio;
 mod ffi;
 mod logging;
-mod panic;
 mod lwip_error;
+mod panic;
 
-use std::net::Ipv4Addr;
-
-use asyncio::{get_keypress, sleep_ms, tcp::TcpSocket};
-use log::info;
+use asyncio::{get_keypress, tcp::TcpSocket};
 use logging::init_with_level;
 use simple_async_local_executor::Executor;
-
-
 
 #[no_mangle]
 pub extern "C" fn main() {
@@ -19,22 +14,44 @@ pub extern "C" fn main() {
     init_with_level(log::Level::Info).unwrap();
     let executor = Executor::default();
 
-
+    let setup_result = unsafe { ffi::env_setup_network() };
+    if setup_result != 0 {
+        log::error!("Failed to setup network: {}", setup_result);
+        return;
+    }
     executor.spawn(async {
-        let setup_result = unsafe { ffi::env_setup_network() };
-        if setup_result != 0 {
-            log::error!("Failed to setup network: {}", setup_result);
-            return;
-        }
-
-        let socket = TcpSocket::connect("192.168.1.120", 8080).await;
+        let mut socket = TcpSocket::connect("192.168.1.120", 8080).await;
 
         if socket.is_err() {
             log::error!("Failed to connect to server: {}", socket.err().unwrap());
             return;
         }
 
-        log::info!("Connected to server");
+
+        log::info!("Press a key to write to the socket");
+        loop {
+            let keycode = get_keypress().await;
+            let buf: String;
+
+            if keycode == 13 {
+                buf = "\n".to_string();
+            } else {
+                buf = format!("{}", std::char::from_u32(keycode.try_into().unwrap()).unwrap());
+            }
+
+            if buf == "q" {
+                break;
+            }
+
+            let result = socket.as_mut().unwrap().write(buf.as_bytes()).await;
+            if result.is_err() {
+                log::error!("Failed to write to socket: {}", result.err().unwrap());
+                return;
+            }
+
+            log::info!("Wrote {} bytes", result.unwrap());
+        }
+
     });
 
     // executor.spawn(async {
@@ -44,9 +61,13 @@ pub extern "C" fn main() {
     // });
 
     loop {
+        // TODO: Make some kind of reactor design, to handle this more modularly
+        unsafe {ffi::env_lwip_rx()};
         let more_tasks = executor.step();
         if !more_tasks {
             break;
         }
     }
+
+    unsafe { ffi::env_teardown_network() };
 }
