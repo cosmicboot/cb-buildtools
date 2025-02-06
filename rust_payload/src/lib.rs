@@ -4,6 +4,9 @@ mod logging;
 mod lwip_error;
 mod panic;
 
+use std::{cell::RefCell, rc::Rc};
+
+use futures_lite::future;
 use asyncio::{get_keypress, tcp::TcpSocket};
 use logging::init_with_level;
 use simple_async_local_executor::Executor;
@@ -35,6 +38,9 @@ pub extern "C" fn main() {
 
             if keycode == 13 {
                 buf = "\n".to_string();
+            }
+            else if keycode == 8 {
+                buf = "^H".to_string();
             } else {
                 buf = format!("{}", std::char::from_u32(keycode.try_into().unwrap()).unwrap());
             }
@@ -62,7 +68,6 @@ pub extern "C" fn main() {
 
     loop {
         // TODO: Make some kind of reactor design, to handle this more modularly
-        unsafe {ffi::env_lwip_rx()};
         let more_tasks = executor.step();
         if !more_tasks {
             break;

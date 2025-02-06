@@ -1,4 +1,4 @@
-From 416cbdf348c31485f5483560806e6fa4b3f1b8e0 Mon Sep 17 00:00:00 2001
+From 52982715a2d533db82c092a00e0af48c59523f18 Mon Sep 17 00:00:00 2001
 From: Mathias Gredal <mathiasgredal@icloud.com>
 Date: Thu, 30 Jan 2025 01:59:19 +0100
 Subject: [PATCH 9/9] Testing
@@ -6,14 +6,14 @@ Subject: [PATCH 9/9] Testing
 ---
  Kconfig                           |  10 +-
  cmd/Kconfig                       |   6 -
- cmd/wasm.c                        | 662 +++++++++++++++++++++++++++++-
+ cmd/wasm.c                        | 660 +++++++++++++++++++++++++++++-
  configs/qemu_arm64_wasm_defconfig |   5 +-
  include/wasm3/m3_exec.h           |   1 +
  include/wasm3/wasm3.h             |   3 +-
  lib/lwip/lwip/src/core/tcp_out.c  |   1 +
  lib/wasm3/m3_env.c                |  17 +-
  lib/wasm3/m3_info.c               |   1 +
- 9 files changed, 662 insertions(+), 44 deletions(-)
+ 9 files changed, 660 insertions(+), 44 deletions(-)
 
 diff --git a/Kconfig b/Kconfig
 index 1f5b0f19..f872b3ca 100644
@@ -65,10 +65,10 @@ index 69347d60..1d7ddb4e 100644
 -	help
 -	  Enable WebAssembly support
 diff --git a/cmd/wasm.c b/cmd/wasm.c
-index c02dd54e..6e54109a 100644
+index c02dd54e..34f49b5a 100644
 --- a/cmd/wasm.c
 +++ b/cmd/wasm.c
-@@ -3,96 +3,720 @@
+@@ -3,96 +3,718 @@
   * Copyright (C) 2025, Mathias Gredal, mathiasgredal@icloud.com.
   */
  
@@ -82,6 +82,7 @@ index c02dd54e..6e54109a 100644
 +#include "lwip/netif.h"
 +#include "lwip/priv/tcp_priv.h"
 +#include "lwip/tcp.h"
++#include "lwip/tcpbase.h"
 +#include "lwip/timeouts.h"
 +#include "net-common.h"
  #include <command.h>
@@ -259,8 +260,7 @@ index c02dd54e..6e54109a 100644
 +}
 +
 +static err_t tcp_sent_callback(void *arg, struct tcp_pcb *pcb, u16_t len)
-+{
-+    printf("tcp_sent_callback: %d\n", len);
+ {
 +    for (int i = 0; i < MAX_NETWORK_SOCKETS; i++)
 +    {
 +        if (network_sockets[i].pcb != pcb)
@@ -290,14 +290,15 @@ index c02dd54e..6e54109a 100644
 +        return ERR_ARG;
 +    }
 +
-+    for(int i = 0; i < MAX_NETWORK_SOCKETS; i++)
++    for (int i = 0; i < MAX_NETWORK_SOCKETS; i++)
 +    {
 +        if (network_sockets[i].pcb != (struct tcp_pcb *)socket)
 +            continue;
 +
 +        if (network_sockets[i].is_connected == false)
 +        {
-+            return ERR_CONN;;
++            return ERR_CONN;
++            ;
 +        }
 +
 +        if (network_sockets[i].err != ERR_OK)
@@ -307,8 +308,7 @@ index c02dd54e..6e54109a 100644
 +
 +        return ERR_OK;
 +    }
-+    
-+    printf("SOMEUNIQUEERROR: %d\n", ERR_VAL);
++
 +    return ERR_VAL;
 +}
 +
@@ -351,11 +351,13 @@ index c02dd54e..6e54109a 100644
 +{
 +    for (int i = 0; i < MAX_NETWORK_SOCKETS; i++)
 +    {
-+        if (network_sockets[i].pcb != NULL)
-+        {
++        if (network_sockets[i].pcb == NULL)
++            continue;
++
++        if (network_sockets[i].pcb->state != CLOSED)
 +            tcp_abort(network_sockets[i].pcb);
-+            network_sockets[i] = (NetworkSocket){0};
-+        }
++
++        network_sockets[i] = (NetworkSocket){0};
 +    }
 +
 +    teardown_network();
@@ -440,7 +442,7 @@ index c02dd54e..6e54109a 100644
 + * Callback function invoked when a TCP connection attempt completes.
 + */
 +static err_t tcp_connect_callback(void *arg, struct tcp_pcb *pcb, err_t error)
- {
++{
 +    printf("tcp_connect_callback: %d\n", error);
 +    /* Iterate through the network sockets array to find the matching PCB */
 +    for (int i = 0; i < MAX_NETWORK_SOCKETS; i++)
@@ -502,7 +504,6 @@ index c02dd54e..6e54109a 100644
 +    /* Return an error if the connection attempt fails immediately */
 +    if (error != ERR_OK)
 +    {
-+        printf("Failed to connect\n");
 +        m3ApiReturn(error);
 +    }
 +
@@ -579,7 +580,6 @@ index c02dd54e..6e54109a 100644
 +
 +    if (socket_err != ERR_OK)
 +    {
-+        printf("Socket write connection validation failed\n");
 +        m3ApiReturn(socket_err);
 +    }
 +
@@ -606,13 +606,11 @@ index c02dd54e..6e54109a 100644
 +        }
 +        else
 +        {
-+            printf("tcp_output failed\n");
 +            m3ApiReturn(err);
 +        }
 +    }
 +    else
 +    {
-+        printf("tcp_write failed\n");
 +        m3ApiReturn(err);
 +    }
 +}

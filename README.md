@@ -18,128 +18,24 @@ setenv serverip 10.0.2.2; setenv ipaddr 10.0.2.15; setenv netmask 255.255.255.0;
 - Add bindings to TCP sockets (see wget_loop in wget.c)
 
 
+- Find out where this error occured:
+Synchronous Abort" handler, esr 0x96000050, far 0xeee0a010
+elr: 0000000000032d94 lr : 000000000002addc (reloc)
+elr: 000000007f6d8d94 lr : 000000007f6d0ddc
+x0 : 000000006f66e4f0 x1 : 000000006f66e5a0
+x2 : 000000007f79ba71 x3 : 0000000000000011
+x4 : 000000007f79bb20 x5 : 000000007f79bb20
+x6 : 0000000000000024 x7 : 000000007f79bd50
+x8 : 000000007f79ba70 x9 : fffffffffffffff0
+x10: 000000000000000d x11: 0000000000000006
+x12: 0000000000000002 x13: 000000006f565df0
+x14: 0000000000000000 x15: 000000006f56510b
+x16: 000000007f6b913c x17: 0000000000000000
+x18: 000000006f665df0 x19: 000000006f66a820
+x20: 00000000000000b1 x21: 0000000000000003
+x22: 000000007f79bb10 x23: 000000007f6d0d98
+x24: 000000007f7d8bcc x25: 0000000000000000
+x26: 0000000000000000 x27: 000000006f694800
+x28: 000000006f66e4d0 x29: 000000006f565a40
 
-#include <command.h>
-#include <console.h>
-#include <lwip/dns.h>
-#include <lwip/timeouts.h>
-#include <net.h>
-#include <time.h>
-
-#define DNS_RESEND_MS 1000
-#define DNS_TIMEOUT_MS 10000
-
-struct dns_cb_arg {
-	ip_addr_t host_ipaddr;
-	const char *var;
-	bool done;
-};
-
-static void do_dns_tmr(void *arg)
-{
-	dns_tmr();
-}
-
-static void dns_cb(const char *name, const ip_addr_t *ipaddr, void *arg)
-{
-	struct dns_cb_arg *dns_cb_arg = arg;
-	char *ipstr = ip4addr_ntoa(ipaddr);
-
-	dns_cb_arg->done = true;
-
-	if (!ipaddr) {
-		printf("DNS: host not found\n");
-		dns_cb_arg->host_ipaddr.addr = 0;
-		return;
-	}
-
-	if (dns_cb_arg->var)
-		env_set(dns_cb_arg->var, ipstr);
-
-	printf("%s\n", ipstr);
-}
-
-static int dns_loop(struct udevice *udev, const char *name, const char *var)
-{
-	struct dns_cb_arg dns_cb_arg = { };
-	bool has_server = false;
-	struct netif *netif;
-	ip_addr_t ipaddr;
-	ip_addr_t ns;
-	ulong start;
-	char *nsenv;
-	int ret;
-
-	dns_cb_arg.var = var;
-
-	netif = net_lwip_new_netif(udev);
-	if (!netif)
-		return -1;
-
-	dns_init();
-
-	nsenv = env_get("dnsip");
-	if (nsenv && ipaddr_aton(nsenv, &ns)) {
-		dns_setserver(0, &ns);
-		has_server = true;
-	}
-
-	nsenv = env_get("dnsip2");
-	if (nsenv && ipaddr_aton(nsenv, &ns)) {
-		dns_setserver(1, &ns);
-		has_server = true;
-	}
-
-	if (!has_server) {
-		log_err("No valid name server (dnsip/dnsip2)\n");
-		net_lwip_remove_netif(netif);
-		return CMD_RET_FAILURE;
-	}
-
-	dns_cb_arg.done = false;
-
-	ret = dns_gethostbyname(name, &ipaddr, dns_cb, &dns_cb_arg);
-
-	if (ret == ERR_OK) {
-		dns_cb(name, &ipaddr, &dns_cb_arg);
-	} else if (ret == ERR_INPROGRESS) {
-		start = get_timer(0);
-		sys_timeout(DNS_RESEND_MS, do_dns_tmr, NULL);
-		do {
-			net_lwip_rx(udev, netif);
-			if (dns_cb_arg.done)
-				break;
-			sys_check_timeouts();
-			if (ctrlc()) {
-				printf("\nAbort\n");
-				break;
-			}
-		} while (get_timer(start) < DNS_TIMEOUT_MS);
-		sys_untimeout(do_dns_tmr, NULL);
-	}
-
-	net_lwip_remove_netif(netif);
-
-	if (dns_cb_arg.done && dns_cb_arg.host_ipaddr.addr != 0)
-		return CMD_RET_SUCCESS;
-
-	return CMD_RET_FAILURE;
-}
-
-int do_dns(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
-{
-	char *name;
-	char *var = NULL;
-
-	if (argc == 1 || argc > 3)
-		return CMD_RET_USAGE;
-
-	name = argv[1];
-
-	if (argc == 3)
-		var = argv[2];
-
-	eth_set_current();
-
-	return dns_loop(eth_get_dev(), name, var);
-}
+Code: b2400102 a90206c1 a9009422 f9000c25 (f8246808)

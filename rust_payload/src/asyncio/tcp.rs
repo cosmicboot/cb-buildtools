@@ -49,7 +49,7 @@ impl Future for TcpWrite {
     fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
         unsafe { ffi::env_lwip_rx() };
 
-        let err = unsafe { ffi::env_socket_check_connection(self.socket) };
+        let err = unsafe { ffi::env_socket_all_writes_acked(self.socket) };
 
         if err == LwipError::WouldBlock.to_code() {
             return Poll::Pending;
@@ -105,7 +105,7 @@ impl TcpSocket {
     //     // Implementation for reading
     // }
 
-    pub async fn write(&mut self, buf: &[u8]) -> Result<usize, LwipError> {
+    pub async fn write(&self, buf: &[u8]) -> Result<usize, LwipError> {
         // 1. Call env_socket_write
         let result = unsafe { ffi::env_socket_write(self.socket, buf.as_ptr(), buf.len() as u32) };
 

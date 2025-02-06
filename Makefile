@@ -84,7 +84,7 @@ run: build
 
 .PHONY: shell
 shell:
-	$(DOCKER) run -it --rm --privileged -v $(shell pwd)/tftpboot:/tftpboot cb/buildtools:compile-commands-dev /bin/bash
+	$(DOCKER) run -it --rm --privileged -v $(shell pwd)/tftpboot:/tftpboot cb/buildtools:aarch64-dev /bin/bash
 
 ## Rust
 .PHONY: rust

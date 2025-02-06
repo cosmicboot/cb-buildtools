@@ -59,5 +59,5 @@ FROM debian:bookworm-slim AS emulator
 RUN apt-get update && apt-get install -y qemu-system
 
 # Copy the u-boot binary from the builder layer
-COPY --from=builder /u-boot/u-boot.bin* /u-boot/u-boot.rom* /u-boot/
+COPY --from=builder /u-boot/u-boot.map* /u-boot/u-boot.bin* /u-boot/u-boot.rom* /u-boot/
 
